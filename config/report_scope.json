@@ -1,0 +1,7 @@
+{
+  "_notes": "Which services the CNTAO monthly comparison covers. By default a service is in scope when a WAN HAI vessel calls on it and it ran for the whole ingested period (see app/selection.py). Add a service code to 'include' to force it in, or to 'exclude' to force it out; both override the rules. Voyages dropped by scope are still listed in review.csv.",
+  "require_house_vessel": true,
+  "require_stable_service": true,
+  "include": [],
+  "exclude": []
+}

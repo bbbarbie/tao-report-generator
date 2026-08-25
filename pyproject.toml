@@ -1,0 +1,10 @@
+[project]
+name = "tao-report-generator"
+version = "1.0.0"
+description = "Builds the monthly TAO Compare workbook from Daily Berth Report files."
+requires-python = ">=3.10"
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+addopts = "-q"

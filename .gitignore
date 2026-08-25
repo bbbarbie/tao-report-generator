@@ -1,0 +1,47 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+
+# Environments
+.venv/
+venv/
+env/
+.env
+.env.*
+!.env.example
+
+# Tooling
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+
+# Generated reports — keep the directory, ignore its contents
+output/*
+!output/.gitkeep
+
+# Real berth reports stay on the machine that holds them. These are internal
+# corporate spreadsheets (vessel schedules, terminal windows, berth
+# negotiations) and must not be pushed to a hosting service. Put your Daily
+# files in samples/daily/ locally; the directories are kept, the contents
+# are not.
+samples/daily/*
+!samples/daily/.gitkeep
+samples/ground_truth/*
+!samples/ground_truth/.gitkeep
+
+# Local decisions made in the Review page — specific to one person's data.
+config/decisions.json
+
+# Local overrides
+config/local.yaml
