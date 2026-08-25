@@ -11,10 +11,10 @@ from __future__ import annotations
 from pathlib import Path
 
 from openpyxl import Workbook
-from openpyxl.styles import Alignment, Border, Font, Side
+from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 
-from app.calculations import MonthlyRow
+from app.calculations import AUTO, REVIEWED, UNRESOLVED, MonthlyRow
 from app.report import MonthlyReport
 
 SHEET_NAME = "CNTAO"
@@ -61,6 +61,21 @@ BORDER = Border(left=THIN, right=THIN, top=THIN, bottom=THIN)
 CENTER = Alignment(horizontal="center", vertical="center")
 CENTER_WRAP = Alignment(horizontal="center", vertical="center", wrap_text=True)
 
+# Rows the rules produced on their own are left exactly as the original report
+# looks. The other two states are tinted so they cannot be mistaken for it —
+# no columns move and no values change, so the sheet still drops into the
+# recipient's routine.
+RESOLUTION_FILL = {
+    AUTO: None,
+    REVIEWED: PatternFill("solid", fgColor="FFE8F3E8"),      # settled by a person
+    UNRESOLVED: PatternFill("solid", fgColor="FFFDF0DC"),    # still carries a question
+}
+RESOLUTION_LABEL = {
+    AUTO: "Automatic — produced by the rules from the Daily files",
+    REVIEWED: "Reviewed — a decision was made about this row",
+    UNRESOLVED: "Unresolved — an open question remains; see the Review sheet",
+}
+
 
 def _style(cell, font=LATIN_FONT, align=CENTER, fmt=None):
     cell.font = font
@@ -100,6 +115,7 @@ def write_workbook(report: MonthlyReport, path: str | Path) -> Path:
 
 
 def _write_row(ws, r: int, row: MonthlyRow) -> None:
+    fill = RESOLUTION_FILL.get(row.resolution)
     values = [
         row.svc,
         row.tfc,
@@ -121,23 +137,80 @@ def _write_row(ws, r: int, row: MonthlyRow) -> None:
     for offset, (value, fmt) in enumerate(zip(values, formats)):
         cell = ws.cell(r, FIRST_COL + offset, value)
         _style(cell, LATIN_FONT, CENTER_WRAP if offset >= 3 else CENTER, fmt)
+        if fill is not None:
+            cell.fill = fill
     ws.row_dimensions[r].height = 15.75
 
 
 def _write_review(wb: Workbook, report: MonthlyReport) -> None:
+    """Open questions first, with their options, then the informational flags."""
     ws = wb.create_sheet(REVIEW_SHEET)
+    bold = Font(name="Calibri", size=11, bold=True)
+    row = 1
+
+    ws.cell(row, 1, f"TAO Compare {report.period} — what to look at").font = Font(
+        name="Calibri", size=12, bold=True
+    )
+    row += 2
+
+    counts = {
+        state: len(report.rows_by_resolution(state))
+        for state in (AUTO, REVIEWED, UNRESOLVED)
+    }
+    for state in (AUTO, REVIEWED, UNRESOLVED):
+        ws.cell(row, 1, counts[state])
+        ws.cell(row, 2, RESOLUTION_LABEL[state])
+        if RESOLUTION_FILL[state] is not None:
+            ws.cell(row, 1).fill = RESOLUTION_FILL[state]
+            ws.cell(row, 2).fill = RESOLUTION_FILL[state]
+        row += 1
+    row += 1
+
+    if report.issues:
+        ws.cell(row, 1, f"Open questions ({len(report.issues)})").font = bold
+        row += 1
+        headers = [
+            "SVC", "TFC", "Vessel", "Question", "Options",
+            "Recommended", "Why", "Source files",
+        ]
+        for c, label in enumerate(headers, start=1):
+            ws.cell(row, c, label).font = bold
+        row += 1
+        for issue in report.issues:
+            recommended = issue.recommended
+            values = [
+                issue.svc,
+                issue.tfc,
+                issue.vessel,
+                issue.question,
+                " | ".join(o.label for o in issue.options),
+                recommended.label if recommended else "no recommendation",
+                issue.why_recommended,
+                ", ".join(issue.source_files[:3])
+                + (" …" if len(issue.source_files) > 3 else ""),
+            ]
+            for c, value in enumerate(values, start=1):
+                cell = ws.cell(row, c, value)
+                cell.alignment = Alignment(vertical="top", wrap_text=True)
+            row += 1
+        row += 1
+
+    ws.cell(row, 1, f"Notes ({len(report.review)})").font = bold
+    row += 1
     headers = ["TFC", "SVC", "Vessel", "Reason", "Detail"]
     for c, label in enumerate(headers, start=1):
-        cell = ws.cell(1, c, label)
-        cell.font = Font(name="Calibri", size=11, bold=True)
-    for r, item in enumerate(report.review, start=2):
+        ws.cell(row, c, label).font = bold
+    row += 1
+    for item in report.review:
         for c, key in enumerate(headers, start=1):
-            ws.cell(r, c, item.as_dict()[key])
-    widths = [12, 7, 26, 40, 80]
-    for c, width in enumerate(widths, start=1):
+            cell = ws.cell(row, c, item.as_dict()[key])
+            cell.alignment = Alignment(vertical="top", wrap_text=True)
+        row += 1
+    if not report.review and not report.issues:
+        ws.cell(row, 1, "Nothing to review — every row came from complete source data.")
+
+    for c, width in enumerate([10, 14, 26, 60, 60, 34, 70, 40], start=1):
         ws.column_dimensions[get_column_letter(c)].width = width
-    if not report.review:
-        ws.cell(2, 1, "No exceptions — every row was produced from complete source data.")
 
 
 def _write_audit(wb: Workbook, report: MonthlyReport) -> None:
@@ -148,7 +221,7 @@ def _write_audit(wb: Workbook, report: MonthlyReport) -> None:
         "Arr Delay", "Arr method", "Arr formula", "Arr source file",
         "Dep Delay", "Dep method", "Dep formula", "Dep source file",
         "W/B", "W/B method", "W/B formula", "W/B source file",
-        "Average W/B", "Flags", "Snapshots seen in",
+        "Average W/B", "Status", "Decisions applied", "Flags", "Snapshots seen in",
     ]
     for c, label in enumerate(headers, start=1):
         cell = ws.cell(1, c, label)
@@ -165,6 +238,8 @@ def _write_audit(wb: Workbook, report: MonthlyReport) -> None:
             row.waiting.value, row.waiting.method, row.waiting.formula,
             row.waiting.source_file,
             row.average_waiting,
+            RESOLUTION_LABEL[row.resolution].split(" — ")[0],
+            "; ".join(row.decisions),
             ", ".join(row.flags),
             f"{len(row.snapshot_files)} files: "
             f"{row.snapshot_files[0] if row.snapshot_files else ''} .. "

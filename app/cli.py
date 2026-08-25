@@ -10,6 +10,7 @@ import csv
 import sys
 from pathlib import Path
 
+from app.calculations import AUTO, REVIEWED, UNRESOLVED
 from app.generator import write_workbook
 from app.operators import OperatorMapping
 from app.parser import discover_daily_files
@@ -106,8 +107,24 @@ def main(argv: list[str] | None = None) -> int:
 
     print(f"Read {len(files)} Daily files -> {len(report.index.histories)} voyages")
     print(f"{len(report.rows)} voyages in {report.period}")
-    print(f"  {report.clean_row_count} produced from complete source data")
-    print(f"  {len(report.rows) - report.clean_row_count} need review")
+    print(f"  {len(report.rows_by_resolution(AUTO))} automatic")
+    print(f"  {len(report.rows_by_resolution(REVIEWED))} reviewed")
+    print(f"  {len(report.rows_by_resolution(UNRESOLVED))} unresolved")
+
+    if report.issues:
+        blocking = len(report.blocking_issues)
+        print()
+        print(f"{len(report.issues)} open questions ({blocking} would leave a field empty):")
+        for issue in report.issues:
+            recommended = issue.recommended
+            mark = "!" if issue.blocking else "-"
+            print(f"  {mark} {issue.svc or '?':4} {issue.tfc or issue.voyage_key}")
+            print(f"      {issue.question}")
+            if recommended:
+                print(f"      suggested: {recommended.label}")
+        print()
+        print("Answer these on the Needs Review screen: streamlit run ui.py")
+
     print(f"wrote {workbook}")
     print(f"wrote {review}")
 

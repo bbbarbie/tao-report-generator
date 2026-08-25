@@ -77,10 +77,37 @@ def test_no_formulas_are_written(generated):
             assert not (isinstance(cell.value, str) and cell.value.startswith("="))
 
 
-def test_the_review_sheet_lists_every_exception(generated, july_report):
+def test_the_review_sheet_states_the_three_row_counts(generated, july_report):
     ws = generated["Review"]
-    assert [c.value for c in ws[1]] == ["TFC", "SVC", "Vessel", "Reason", "Detail"]
-    assert ws.max_row - 1 == max(len(july_report.review), 1)
+    text = "\n".join(
+        str(c.value) for row in ws.iter_rows() for c in row if c.value is not None
+    )
+    for state in ("Automatic", "Reviewed", "Unresolved"):
+        assert state in text
+    counts = {c.value for row in ws.iter_rows(min_col=1, max_col=1) for c in row}
+    for state in ("auto", "reviewed", "unresolved"):
+        assert len(july_report.rows_by_resolution(state)) in counts
+
+
+def test_the_review_sheet_carries_every_open_question(generated, july_report):
+    ws = generated["Review"]
+    text = "\n".join(
+        str(c.value) for row in ws.iter_rows() for c in row if c.value is not None
+    )
+    assert f"Open questions ({len(july_report.issues)})" in text
+    for issue in july_report.issues:
+        assert issue.question in text
+        # the options and the reason for the recommendation travel with it
+        for option in issue.options:
+            assert option.label in text
+
+
+def test_the_review_sheet_still_lists_the_informational_notes(generated, july_report):
+    ws = generated["Review"]
+    text = "\n".join(
+        str(c.value) for row in ws.iter_rows() for c in row if c.value is not None
+    )
+    assert f"Notes ({len(july_report.review)})" in text
 
 
 def test_the_audit_sheet_records_provenance_for_every_row(generated, july_report):

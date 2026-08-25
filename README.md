@@ -4,28 +4,65 @@ Builds the monthly `TAO Compare YYYYMM.xlsx` workbook from a batch of daily
 `Daily Berth Report` files, reproducing the layout and the calculations of the
 report that was previously assembled by hand.
 
-Everything runs on your own machine. No workbook content leaves the computer,
-and there is no AI or cloud service involved at run time.
+Everything runs on your own machine. The web server is bound to `127.0.0.1`,
+so it is reachable only from this computer. No workbook content and no saved
+decision leaves the machine, and there is no AI or cloud service involved at
+run time.
 
 ## For the person running the report
 
-1. Double-click **`run.command`** (macOS) or **`run.bat`** (Windows).
-   The first run takes a minute to set itself up; after that it is quick.
-2. The tool opens in your browser.
-3. Drop in the Daily files (or point it at the folder they live in).
-4. Choose the month.
-5. Click **Generate TAO Compare**, then **Download**.
+Double-click **TAO Report Generator** (Windows) or **`run.command`** (macOS).
+No Terminal, no commands. The first run sets itself up and takes a few minutes;
+after that it opens in seconds.
 
-You get three things:
+The tool opens in your browser and works in one direction:
 
-- **`TAO Compare YYYYMM.xlsx`** — sheet `CNTAO` in the usual layout, plus a
-  `Review` sheet and an `Audit` sheet.
-- **`review.csv`** — every row the tool could not complete on its own, and why.
-- The figures on screen before you download anything.
+```
+Daily files  →  Month  →  Process  →  Review anything uncertain  →  Download
+```
 
-Nothing is ever guessed. If a vessel's operator is unknown, or a departure time
-is missing, the tool says so instead of filling something in. Unrecognised
-vessels can be assigned an operator once, in the app, and are remembered.
+1. **Daily files** — drop them in, or point at the folder they live in.
+2. **Month** — defaults to the month just gone.
+3. **Process** — reads every file and rebuilds each voyage's history.
+4. **Needs Review** — appears only when something is genuinely uncertain.
+   Answer as many or as few as you like; the report works either way.
+5. **Download** — `TAO Compare YYYYMM.xlsx` plus a `review.csv`.
+
+### Nothing is ever guessed
+
+When the tool cannot be confident, it asks instead of picking. Each question
+shows the vessel, its timestamps, which Daily files it came from, exactly what
+is uncertain, the possible answers, and — where the evidence supports one —
+which it suggests and why. You decide.
+
+It asks about: an unrecognised operator, two records that might be one voyage,
+a voyage with no departure time, Daily files that disagree with each other, a
+calculated figure that differs from the one the Daily printed, and an uncertain
+berthing window.
+
+### Your answers are remembered — but only where that is safe
+
+- **Reusable rules.** "This vessel belongs to PIL" is true next month too, so
+  it is saved and applied automatically from then on.
+- **One-off overrides.** "For this voyage, use the calculated departure delay"
+  says nothing about any other voyage, so it applies to that one row in that
+  one month and nothing else.
+
+An override is **never** turned into a rule automatically. The **Saved
+decisions** screen lists both kinds separately, and either can be undone.
+
+### The report tells you where each row came from
+
+Every row is one of three things, shown on screen and tinted in the workbook:
+
+| | |
+| --- | --- |
+| **Automatic** | produced by the rules from the Daily files — no tint |
+| **Reviewed** | you made a decision about it — green |
+| **Unresolved** | an open question remains — amber |
+
+One unresolved voyage never blocks the rest of the month. A row is only left
+with an empty field when a required value genuinely cannot be produced safely.
 
 ## Supplying the Daily files
 
@@ -52,10 +89,13 @@ Reports land in `output/`.
 
 | File | What it controls |
 | --- | --- |
-| `config/operator_mapping.json` | which carrier (OPR) each vessel belongs to |
+| `config/operator_mapping.json` | the starting vessel → carrier list (shipped with the tool) |
 | `config/report_scope.json` | which services the report covers |
+| `config/decisions.json` | your own saved decisions (created on first use) |
 
-Both are plain JSON with notes at the top.
+All plain JSON with notes at the top. `decisions.json` stays on your computer
+and is never version-controlled — it records one person's decisions about one
+company's voyages.
 
 ## How the numbers are worked out
 
@@ -87,9 +127,13 @@ app/
   report.py          the pipeline
   generator.py       writes the workbook
   validation.py      compares against a known-good workbook (tests only)
+  review.py          turns uncertainty into an answerable question
+  decisions.py       saved rules and one-off overrides
   cli.py             command line entry point
-ui.py                local browser UI
-config/              editable mappings
+ui.py                local browser UI — navigation shell
+ui_pages/            the three screens: Generate, Needs Review, Saved decisions
+launcher/            Windows launcher internals
+config/              editable mappings and saved decisions
 samples/             Daily inputs and the historical report used as a fixture
 tests/               unit tests and the July 2026 regression
 output/              generated reports

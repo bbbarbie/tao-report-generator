@@ -29,6 +29,11 @@ NEGATIVE_WAITING = "BERTHED_BEFORE_WINDOW_OPENED"
 # The Daily prints one decimal; agreement is judged at that resolution.
 REPORTED_TOLERANCE = 0.11
 
+# Row resolution states, shown in the report so the three are never confused.
+AUTO = "auto"
+REVIEWED = "reviewed"
+UNRESOLVED = "unresolved"
+
 
 @dataclass
 class ValueProvenance:
@@ -63,6 +68,11 @@ class MonthlyRow:
     operator_source: str = ""
     flags: list[str] = field(default_factory=list)
     snapshot_files: list[str] = field(default_factory=list)
+
+    # How this row came to be: produced by the rules alone, settled by someone
+    # on the Review page, or still carrying an open question.
+    resolution: str = AUTO
+    decisions: list[str] = field(default_factory=list)
 
     @property
     def group_key(self) -> tuple[str, str]:
@@ -104,6 +114,15 @@ def calc_waiting(snap: VoyageSnapshot) -> float | None:
     if ready is None:
         return None
     return round_hours(max(0.0, hours_between(snap.atb, ready)))
+
+
+def calc_waiting_from_arrival(snap: VoyageSnapshot) -> float | None:
+    """W/B counted from arrival, as the Daily itself computes it.
+
+    Offered as an alternative on the Review page when a ship berthed before its
+    window opened and the two readings diverge.
+    """
+    return round_hours(hours_between(snap.atb, snap.ata))
 
 
 def _latest(*values: datetime | None) -> datetime | None:
@@ -213,10 +232,23 @@ def build_row(
     history: VoyageHistory,
     mapping: OperatorMapping,
     service_terminal: str | None = None,
+    overrides: dict | None = None,
 ) -> MonthlyRow:
+    """Assemble one report row, honouring any decisions made about this voyage.
+
+    Overrides land in two places. A corrected timestamp or window has to go in
+    before the metrics are worked out, because everything downstream depends on
+    it; a corrected metric goes in afterwards, replacing what the rules produced.
+    """
+    overrides = overrides or {}
+    applied: list[str] = []
+
     snap = history.consolidated()
     own_terminal = normalize_terminal(snap.terminal)
+    snap = _apply_timestamp_overrides(snap, overrides, applied)
     snap, window_corrected = effective_window(snap)
+    if "window" in overrides:
+        snap, window_corrected = _apply_window_override(snap, overrides["window"], applied)
     op: OperatorResult = mapping.resolve(snap.vessel_voyage, snap.tfc)
 
     # The Daily's own figures were struck against the window it prints. Once
@@ -259,6 +291,11 @@ def build_row(
         operator_source=op.source,
         snapshot_files=[s.source_file for s in history.snapshots],
     )
+
+    _apply_value_overrides(row, overrides, applied)
+    if applied:
+        row.resolution = REVIEWED
+        row.decisions = applied
 
     for flag in (arr_flag, dep_flag, wait_flag):
         if flag:
@@ -326,3 +363,87 @@ def attach_group_averages(rows: list[MonthlyRow]) -> None:
         seen.add(key)
         values = sums.get(key)
         row.average_waiting = round_hours(sum(values) / len(values)) if values else None
+
+
+# --- applying decisions -------------------------------------------------------
+#
+# A decision the user made on the Review page. Timestamps go in before the
+# metrics are computed; metrics go in after, replacing the computed figure.
+
+_TIMESTAMP_FIELDS = ("ata", "atb", "atd")
+_VALUE_FIELDS = ("arr_delay", "dep_delay", "waiting")
+
+
+def _coerce_datetime(value):
+    if value is None or isinstance(value, datetime):
+        return value
+    try:
+        return datetime.fromisoformat(str(value))
+    except ValueError:
+        return None
+
+
+def _apply_timestamp_overrides(
+    snap: VoyageSnapshot, overrides: dict, applied: list[str]
+) -> VoyageSnapshot:
+    changes = {}
+    for name in _TIMESTAMP_FIELDS:
+        if name not in overrides:
+            continue
+        moment = _coerce_datetime(overrides[name].value)
+        if moment is None:
+            continue
+        changes[name] = moment
+        applied.append(f"{name.upper()} set to {moment:%Y-%m-%d %H:%M} by review")
+    return replace(snap, **changes) if changes else snap
+
+
+def _apply_window_override(
+    snap: VoyageSnapshot, decision, applied: list[str]
+) -> tuple[VoyageSnapshot, bool]:
+    """A chosen berthing window. Choosing the dates as written undoes the
+    weekday correction, so the flag has to come off with it."""
+    value = decision.value
+    if not isinstance(value, (list, tuple)) or len(value) != 2:
+        return snap, False
+    start, end = (_coerce_datetime(v) for v in value)
+    if start is None or end is None:
+        return snap, False
+    applied.append(
+        f"berthing window set to {start:%d %b %H:%M} – {end:%d %b %H:%M} by review"
+    )
+    corrected = decision.option_key == "pattern"
+    return replace(snap, window_start=start, window_end=end), corrected
+
+
+def _apply_value_overrides(row: MonthlyRow, overrides: dict, applied: list[str]) -> None:
+    for name in _VALUE_FIELDS:
+        if name not in overrides:
+            continue
+        value = overrides[name].value
+        if value is None:
+            continue
+        provenance = getattr(row, name)
+        applied.append(
+            f"{_column_label(name)} set to {value} by review "
+            f"(rules gave {provenance.value})"
+        )
+        setattr(
+            row,
+            name,
+            ValueProvenance(
+                value=float(value),
+                method="chosen_in_review",
+                formula=overrides[name].note or "chosen on the Review page",
+                source_file=provenance.source_file,
+                snapshot_date=provenance.snapshot_date,
+                calculated_value=provenance.calculated_value,
+            ),
+        )
+
+    if "opr" in overrides and overrides["opr"].value:
+        row.opr = str(overrides["opr"].value)
+        row.operator_source = "review"
+        applied.append(f"OPR set to {row.opr} by review")
+        if UNKNOWN_OPERATOR in row.flags:
+            row.flags.remove(UNKNOWN_OPERATOR)

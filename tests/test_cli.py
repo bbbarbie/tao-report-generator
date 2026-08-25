@@ -34,7 +34,11 @@ def test_cli_writes_a_workbook_and_a_review_file(tmp_path, capsys):
 
     out = capsys.readouterr().out
     assert "27 voyages in 202607" in out
-    assert "need review" in out
+    # The three row states and the open questions are reported, not just a total.
+    for state in ("automatic", "reviewed", "unresolved"):
+        assert state in out
+    assert "open questions" in out
+    assert "suggested:" in out
 
 
 @requires_samples

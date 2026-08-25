@@ -10,10 +10,18 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
-from app.calculations import MonthlyRow, attach_group_averages, build_row
+from app.calculations import (
+    UNRESOLVED,
+    MonthlyRow,
+    attach_group_averages,
+    build_row,
+)
+from app.decisions import DecisionStore
 from app.operators import OperatorMapping
+from app.review import ReviewIssue, collect_issues
 from app.parser import discover_daily_files, parse_many
 from app.selection import (
+    NO_ATD,
     ScopeConfig,
     Selection,
     select_for_month,
@@ -48,6 +56,7 @@ class MonthlyReport:
     review: list[ReviewItem]
     selection: Selection
     index: HistoryIndex
+    issues: list[ReviewIssue] = field(default_factory=list)
     source_files: list[str] = field(default_factory=list)
 
     @property
@@ -57,6 +66,22 @@ class MonthlyReport:
     @property
     def clean_row_count(self) -> int:
         return sum(1 for r in self.rows if not r.flags)
+
+    def rows_by_resolution(self, state: str) -> list[MonthlyRow]:
+        return [r for r in self.rows if r.resolution == state]
+
+    @property
+    def open_issue_count(self) -> int:
+        return len(self.issues)
+
+    @property
+    def blocking_issues(self) -> list[ReviewIssue]:
+        return [i for i in self.issues if i.blocking]
+
+    @property
+    def is_complete(self) -> bool:
+        """True when nothing is left to ask. The report generates either way."""
+        return not self.issues
 
 
 def _operator_sort_key(row: MonthlyRow) -> tuple:
@@ -73,22 +98,50 @@ def build_report(
     month: int,
     mapping: OperatorMapping | None = None,
     scope: ScopeConfig | None = None,
+    store: DecisionStore | None = None,
 ) -> MonthlyReport:
     mapping = mapping or OperatorMapping.load()
     scope = scope or ScopeConfig.load()
+    store = store if store is not None else DecisionStore.load()
+    period = f"{year:04d}{month:02d}"
+
+    # Reusable rules the user has already set are part of the mapping from here
+    # on; they are not a review question any more.
+    for vessel, opr in store.operator_rules().items():
+        mapping.learn(vessel, opr)
 
     snapshots = parse_many(daily_files)
     index = build_histories(snapshots)
     selection = select_for_month(index, year, month, mapping, scope)
 
+    selected, readmitted = _apply_inclusion_decisions(selection, store, period)
+
     terminals = service_terminals(index)
     rows = [
-        build_row(h, mapping, terminals.get(h.consolidated().svc or ""))
-        for h in selection.selected
+        build_row(
+            h,
+            mapping,
+            terminals.get(h.consolidated().svc or ""),
+            store.overrides_for(period, h.voyage_key),
+        )
+        for h in selected
     ]
     rows.sort(key=_operator_sort_key)
-    attach_group_averages(rows)
 
+    missing_atd = [
+        r.history
+        for r in selection.rejected
+        if r.reason == NO_ATD and r.history.voyage_key not in readmitted
+    ]
+    in_scope = {
+        svc for svc, verdict in selection.service_scope.items() if verdict == "in"
+    }
+    issues = collect_issues(
+        rows, index, mapping, missing_atd, period, store, in_scope
+    )
+    _mark_unresolved(rows, issues)
+
+    attach_group_averages(rows)
     review = _collect_review(rows, selection, index)
 
     return MonthlyReport(
@@ -98,8 +151,56 @@ def build_report(
         review=review,
         selection=selection,
         index=index,
+        issues=issues,
         source_files=[Path(p).name for p in daily_files],
     )
+
+
+def _apply_inclusion_decisions(selection: Selection, store: DecisionStore, period: str):
+    """Let a decision put back a voyage the rules left out, or take one out.
+
+    Only voyages rejected for a missing departure time can be readmitted — the
+    port and month filters are facts, not judgement calls.
+    """
+    selected = list(selection.selected)
+    readmitted: set[str] = set()
+
+    for rejection in selection.rejected:
+        if rejection.reason != NO_ATD:
+            continue
+        decision = store.overrides_for(period, rejection.history.voyage_key).get("include")
+        if decision and decision.value:
+            selected.append(rejection.history)
+            readmitted.add(rejection.history.voyage_key)
+
+    for row_key, fields in store.overrides.get(period, {}).items():
+        decision = fields.get("include")
+        if decision is not None and decision.value is False:
+            selected = [h for h in selected if h.voyage_key != row_key]
+
+    return selected, readmitted
+
+
+def _mark_unresolved(rows: list[MonthlyRow], issues: list[ReviewIssue]) -> None:
+    """A row with an open question is never passed off as settled.
+
+    Only a question that would leave a required output field empty makes a row
+    unresolved. The rest already carry a defensible value, so the row stands
+    and the question is recorded against it.
+    """
+    open_by_voyage: dict[str, list[ReviewIssue]] = {}
+    for issue in issues:
+        open_by_voyage.setdefault(issue.voyage_key, []).append(issue)
+
+    for row in rows:
+        open_issues = open_by_voyage.get(row.voyage_key, [])
+        if not open_issues:
+            continue
+        # A row with an open question is not "automatically resolved", even
+        # when it already carries a defensible value. Only a blocking question
+        # actually leaves a field empty.
+        row.resolution = UNRESOLVED
+        row.flag("OPEN_REVIEW_QUESTION")
 
 
 ONE_SNAPSHOT_WARNING = "ONLY_ONE_DAILY_FILE_SUPPLIED"

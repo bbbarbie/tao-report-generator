@@ -20,9 +20,11 @@ July 2026 regression reached 24/27.
 | Review output | Done — `review.csv` and a `Review` sheet. |
 | Audit trail | Done — an `Audit` sheet with per-value provenance. |
 | Ground-truth validation | Done — machine-readable JSON and a readable summary. |
-| Tests | 175 tests, all passing. |
-| Local UI | Done — Streamlit, with double-click launchers for macOS and Windows. |
-| Packaged executable | Not done. See "Next steps". |
+| Tests | 213 tests, all passing. |
+| Review / decision system | Done — questions with candidates, recommendations and reasons; answers saved as rules or one-off overrides. |
+| Local UI | Done — three screens: Generate, Needs Review, Saved decisions. |
+| Windows launcher | Done — `TAO Report Generator.vbs` starts the server with no console window and opens the browser. **Not tested on Windows** (built on macOS); the equivalent macOS launcher is verified end to end. |
+| Packaged executable | Not done. The launcher still needs Python installed. See "Next steps". |
 
 ## Verified result
 
@@ -53,6 +55,36 @@ name. Nothing is silently dropped: every excluded voyage is in `review.csv`.
 
 Ask: is `AS1` out because it stopped calling at Qingdao? Should the new services
 (`AMX`, `PMX`, `INX`, `AA1`) be in the August report?
+
+## The review system
+
+Uncertainty is never resolved silently. `app/review.py` turns each uncertain
+case into a question carrying the voyage, its timestamps, the Daily files it
+came from, the candidate answers, and a recommendation with its reasoning where
+the evidence supports one. Seven kinds are detected: unknown operator,
+ambiguous voyage match, missing ATD, conflicting snapshots, value disagreement,
+uncertain window, and berthing before the window opened.
+
+`app/decisions.py` stores the answers, in two deliberately separate categories:
+
+* **rules** — reusable, currently only vessel → operator, applied to every
+  future month;
+* **overrides** — one voyage in one month, applied nowhere else.
+
+`record_rule` raises on any kind not in `REUSABLE_KINDS`, so an override cannot
+become a rule by accident. That guarantee is asserted in `tests/test_decisions.py`.
+
+Detection is tuned to be worth reading rather than exhaustive: a timestamp
+revision under two hours is the berth board sharpening an estimate, not a
+conflict, and a missing departure on a service the report does not cover is not
+a decision anyone needs to make. Without that filtering July raised 18
+questions; with it, 10 — including a genuine 10-day date correction in the
+Daily files that would otherwise have been buried.
+
+Row states are `auto`, `reviewed` and `unresolved`. A row with any open
+question is `unresolved` even when it already carries a defensible value; only
+a *blocking* question (one that would leave a required column empty) actually
+holds a value back. The month always generates.
 
 ## Design decisions worth knowing
 
@@ -91,8 +123,14 @@ Ask: is `AS1` out because it stopped calling at Qingdao? Should the new services
 3. Ask about `E044JKPU` and `S564JCAG`; if an unsampled Daily file explains them,
    the rules are already right and the sample set is just incomplete.
 4. Decide whether the generated workbook should preserve the other sheets.
-5. Package as a double-clickable app (PyInstaller) if the launcher scripts turn
-   out to be too much friction. They currently need Python installed.
+5. **Test the Windows launcher on an actual Windows machine.** It was written
+   on macOS and cannot be run here. The parts that were verifiable — the
+   Streamlit flags, the loopback binding, the port-readiness probe and the
+   browser hand-off — are all confirmed via the macOS launcher, which uses the
+   same sequence. What remains unverified is batch/VBScript syntax and the
+   first-run `venv` bootstrap on Windows.
+6. Package as a double-clickable app (PyInstaller) so Python does not need to
+   be installed at all. The launcher currently requires Python 3.10+.
 
 ## Repository map
 
