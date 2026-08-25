@@ -8,3 +8,9 @@ requires-python = ">=3.10"
 pythonpath = ["."]
 testpaths = ["tests"]
 addopts = "-q"
+
+# No single test should take a minute. A hang used to consume a whole CI job;
+# now it fails with a traceback pointing at the test that stalled. The slowest
+# honest test parses two dozen workbooks, which is seconds, not minutes.
+timeout = 90
+timeout_method = "thread"

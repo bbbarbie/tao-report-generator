@@ -16,17 +16,65 @@ separately and reported as exactly that.
 
 from __future__ import annotations
 
+import os
 import sys
 import tempfile
+import threading
 from datetime import datetime
 from pathlib import Path
 
 CHECKS: list[tuple[str, str]] = []
+TRANSCRIPT: list[str] = []
+
+# A packaged windowed build has no console on Windows, so sys.stdout may be
+# None and print() would raise. Everything goes through say(), and a copy is
+# left in a file the build verifier can read either way.
+RESULT_FILE = "selftest-result.txt"
+
+# Nothing here should take more than a few seconds. If it ever does, the
+# process kills itself rather than being left for a build job to wait on.
+WATCHDOG_SECONDS = 120
+
+
+def say(line: str = "") -> None:
+    TRANSCRIPT.append(line)
+    stream = sys.stdout
+    if stream is None:
+        return
+    try:
+        print(line, file=stream, flush=True)
+    except (OSError, ValueError, AttributeError):
+        pass
 
 
 def record(name: str, detail: str = "") -> None:
     CHECKS.append((name, detail))
-    print(f"  ok   {name}" + (f" — {detail}" if detail else ""))
+    say(f"  ok   {name}" + (f" — {detail}" if detail else ""))
+
+
+def start_watchdog(seconds: int = WATCHDOG_SECONDS) -> threading.Timer:
+    """Guarantee this process ends, whatever happens inside it."""
+
+    def give_up() -> None:  # pragma: no cover - only fires on a real stall
+        say(f"\n  FAIL the self-test stalled for more than {seconds}s")
+        write_transcript()
+        os._exit(3)
+
+    timer = threading.Timer(seconds, give_up)
+    timer.daemon = True
+    timer.start()
+    return timer
+
+
+def write_transcript(folder: Path | None = None) -> Path | None:
+    """Leave the result somewhere readable, since stdout may go nowhere."""
+    target = Path(folder) if folder else Path(sys.executable).resolve().parent
+    try:
+        path = target / RESULT_FILE
+        path.write_text("\n".join(TRANSCRIPT) + "\n", encoding="utf-8")
+        return path
+    except OSError:
+        return None
 
 
 def build_daily_workbook(path: Path) -> None:
@@ -67,10 +115,19 @@ def build_daily_workbook(path: Path) -> None:
 
 
 def main() -> int:
-    print("TAO Report Generator — packaged self-test")
-    print(f"  python {sys.version.split()[0]}")
-    print(f"  frozen: {getattr(sys, 'frozen', False)}")
-    print()
+    watchdog = start_watchdog()
+    try:
+        return _run()
+    finally:
+        watchdog.cancel()
+        write_transcript()
+
+
+def _run() -> int:
+    say("TAO Report Generator — packaged self-test")
+    say(f"  python {sys.version.split()[0]}")
+    say(f"  frozen: {getattr(sys, 'frozen', False)}")
+    say()
 
     try:
         from app.calculations import build_row
@@ -135,10 +192,11 @@ def main() -> int:
             record("output verified", ", ".join(check.sheetnames))
 
     except Exception as exc:  # noqa: BLE001 - the exit code is the contract
-        print(f"\n  FAIL {type(exc).__name__}: {exc}", file=sys.stderr)
         import traceback
 
-        traceback.print_exc()
+        say(f"\n  FAIL {type(exc).__name__}: {exc}")
+        for line in traceback.format_exc().splitlines():
+            say(f"    {line}")
         return 1
 
     # Reported separately and never as a pass: a toolkit that imports is not a
@@ -146,12 +204,12 @@ def main() -> int:
     try:
         from PySide6 import QtCore
 
-        print(f"\n  note: Qt {QtCore.__version__} loaded (interface not exercised)")
+        say(f"\n  note: Qt {QtCore.__version__} loaded (interface not exercised)")
     except Exception as exc:  # noqa: BLE001
-        print(f"\n  FAIL the interface toolkit did not load: {exc}", file=sys.stderr)
+        say(f"\n  FAIL the interface toolkit did not load: {exc}")
         return 1
 
-    print(f"\nAll {len(CHECKS)} engine checks passed.")
+    say(f"\nAll {len(CHECKS)} engine checks passed.")
     return 0
 
 

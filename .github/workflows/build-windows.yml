@@ -18,63 +18,95 @@ permissions:
 env:
   APP_NAME: TAO Report Generator
   ARTIFACT_NAME: TAO-Report-Generator-Windows
+  # Nothing on a build machine can answer a dialog, so nothing may open one.
+  CI: "true"
+  TAO_NO_DIALOGS: "1"
+  QT_QPA_PLATFORM: offscreen
+  PYTHONUTF8: "1"
 
 jobs:
   build:
     runs-on: windows-latest
-    timeout-minutes: 45
+    # Every step below is bounded, so this is a backstop rather than the limit
+    # anything is expected to reach. A healthy run finishes in about 10 minutes.
+    timeout-minutes: 30
 
     steps:
       - name: Check out the repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
+        timeout-minutes: 3
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
+        timeout-minutes: 5
         with:
           python-version: "3.12"
           cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-desktop.txt
 
       - name: Install dependencies
+        timeout-minutes: 10
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -r requirements.txt
-          python -m pip install -r requirements-desktop.txt
+          python -m pip install -r requirements.txt -r requirements-desktop.txt
+          python -m pip list
 
-      # The build is only worth making if the engine is correct. A failure here
-      # stops everything: no artifact is produced from a broken engine.
+      # Bounded twice over: pytest-timeout fails any single test that stalls
+      # (90s, set in pyproject.toml), and the step itself is capped. A hang
+      # now costs a minute and names the test, instead of the whole job.
       - name: Run the test suite
-        env:
-          QT_QPA_PLATFORM: offscreen
-        run: python -m pytest -q
+        timeout-minutes: 12
+        run: |
+          $start = Get-Date
+          python -m pytest -vv --durations=30 --timeout=90 --timeout-method=thread
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Write-Host "tests took $((Get-Date) - $start)"
 
       - name: Build the application
+        timeout-minutes: 12
         run: |
+          $start = Get-Date
           pyinstaller packaging/tao_report_generator.spec --noconfirm --clean `
-            --distpath dist --workpath build
-        # PyInstaller returns non-zero on failure, which fails the step.
+            --distpath dist --workpath build --log-level WARN
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Write-Host "PyInstaller took $((Get-Date) - $start)"
 
       # PyInstaller puts bundled data under _internal. The end user should find
       # the guide beside the icon they click, not buried in a subfolder.
       - name: Place the end-user guide beside the application
-        run: |
-          Copy-Item "packaging\使用說明.txt" "dist\$env:APP_NAME\使用說明.txt" -Force
+        timeout-minutes: 2
+        run: Copy-Item "packaging\使用說明.txt" "dist\$env:APP_NAME\使用說明.txt" -Force
 
+      # Runs the packaged executable, which parses a Daily report and writes a
+      # workbook. Bounded inside (a 120s watchdog in the self-test), by the
+      # subprocess timeout, and by this step.
       - name: Verify the build
-        run: python packaging/verify_build.py "dist/$env:APP_NAME"
-        # Fails if the exe is missing, required files were left out, anything
-        # confidential was bundled, or the packaged engine cannot run.
+        timeout-minutes: 6
+        env:
+          TAO_SELFTEST_TIMEOUT: "180"
+        run: |
+          $start = Get-Date
+          python packaging/verify_build.py "dist/$env:APP_NAME"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Write-Host "verification took $((Get-Date) - $start)"
 
       - name: Package into a ZIP
+        timeout-minutes: 6
         run: |
+          $start = Get-Date
           Compress-Archive -Path "dist\$env:APP_NAME" `
             -DestinationPath "$env:ARTIFACT_NAME.zip" -Force
           if (-not (Test-Path "$env:ARTIFACT_NAME.zip")) {
             Write-Error "the ZIP was not created"
             exit 1
           }
-          Write-Host "ZIP size: $((Get-Item "$env:ARTIFACT_NAME.zip").Length / 1MB) MB"
+          $mb = [math]::Round((Get-Item "$env:ARTIFACT_NAME.zip").Length / 1MB, 1)
+          Write-Host "ZIP is $mb MB, took $((Get-Date) - $start)"
 
       - name: Check the ZIP contains what it should
+        timeout-minutes: 3
         shell: python
         run: |
           import os, sys, zipfile
@@ -91,7 +123,10 @@ jobs:
               print("first 20 entries:", names[:20])
               sys.exit(1)
 
-          leaked = [n for n in names if n.endswith(".xlsx") or "/tests/" in n]
+          leaked = [
+              n for n in names
+              if n.endswith(".xlsx") or "/tests/" in n or n.endswith("selftest-result.txt")
+          ]
           if leaked:
               print("these should never have been packaged:", leaked[:10])
               sys.exit(1)
@@ -100,24 +135,35 @@ jobs:
           print("ZIP contents verified")
 
       - name: Upload the artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
+        timeout-minutes: 10
         with:
           name: ${{ env.ARTIFACT_NAME }}
           path: ${{ env.ARTIFACT_NAME }}.zip
           if-no-files-found: error
+          compression-level: 0   # already a ZIP; recompressing only costs time
           retention-days: 90
 
+      # Whatever happened, say where the time went. A future slow run should be
+      # diagnosable from the summary alone.
       - name: Summary
+        if: always()
         shell: bash
         run: |
           {
-            echo "### Windows build ready"
+            echo "### Windows build — ${{ job.status }}"
             echo
-            echo "Download **${ARTIFACT_NAME}** from the Artifacts section at the"
-            echo "bottom of this run's summary page."
-            echo
-            echo "Unzip it and give the whole **${APP_NAME}** folder to the user."
-            echo "They double-click **${APP_NAME}.exe** — no Python needed."
+            if [ "${{ job.status }}" = "success" ]; then
+              echo "Download **${ARTIFACT_NAME}** from the Artifacts section at the"
+              echo "bottom of this page."
+              echo
+              echo "Unzip it and give the whole **${APP_NAME}** folder to the user."
+              echo "They double-click **${APP_NAME}.exe** — no Python needed."
+            else
+              echo "Open the failed step above. Each step is time-bounded, and"
+              echo "the test step prints per-test durations, so a slow or hanging"
+              echo "step names itself."
+            fi
             echo
             echo "Built from \`${GITHUB_REF_NAME}\` (\`${GITHUB_SHA:0:7}\`)."
           } >> "$GITHUB_STEP_SUMMARY"

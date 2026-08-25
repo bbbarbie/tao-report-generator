@@ -16,15 +16,21 @@ worse than reporting nothing.
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 APP_NAME = "TAO Report Generator"
 # The workflow only ever builds on Windows; the other branch exists so the
 # verifier can be exercised on the machine it was written on.
 EXE_NAME = f"{APP_NAME}.exe" if sys.platform == "win32" else APP_NAME
-SELFTEST_TIMEOUT = 300
+# The self-test does a few seconds of work and carries its own 120s watchdog.
+# This is the outer bound: if it is ever hit, something is wrong with the build
+# rather than slow, and the job should say so quickly.
+SELFTEST_TIMEOUT = int(os.environ.get("TAO_SELFTEST_TIMEOUT", "180"))
+RESULT_FILE = "selftest-result.txt"
 
 # Things whose absence would break the application for the end user. Searched
 # for by name, because PyInstaller decides where bundled data lands.
@@ -96,7 +102,11 @@ def main(argv: list[str] | None = None) -> int:
         )
 
     # The real test: run the engine inside the packaged environment.
-    print(f"\n  running {EXE_NAME} --selftest\n")
+    print(f"\n  running {EXE_NAME} --selftest  (limit {SELFTEST_TIMEOUT}s)\n")
+    transcript = folder / RESULT_FILE
+    transcript.unlink(missing_ok=True)
+
+    started = time.monotonic()
     try:
         result = subprocess.run(
             [str(exe), "--selftest"],
@@ -106,22 +116,41 @@ def main(argv: list[str] | None = None) -> int:
             cwd=folder,
         )
     except subprocess.TimeoutExpired:
+        # A windowed build that stalls is almost always waiting on a dialog.
         failures.append(f"the self-test did not finish within {SELFTEST_TIMEOUT}s")
         print(f"  FAIL  the self-test did not finish within {SELFTEST_TIMEOUT}s")
+        print("        a windowed build that hangs is usually waiting on a dialog")
     except OSError as exc:
         failures.append(f"the executable would not run: {exc}")
         print(f"  FAIL  the executable would not run: {exc}")
     else:
-        for line in (result.stdout or "").splitlines():
+        elapsed = time.monotonic() - started
+        # A windowed Windows build has no console, so stdout is normally empty
+        # and the transcript file is where the detail actually is.
+        output = result.stdout or ""
+        if not output.strip() and transcript.exists():
+            output = transcript.read_text(encoding="utf-8", errors="replace")
+        for line in output.splitlines():
             print(f"    | {line}")
-        if result.stderr.strip():
+        if (result.stderr or "").strip():
             for line in result.stderr.splitlines():
                 print(f"    ! {line}")
+
         check(
             result.returncode == 0,
-            "the packaged engine parsed a Daily report and wrote a workbook",
+            f"the packaged engine parsed a Daily report and wrote a workbook "
+            f"({elapsed:.1f}s)",
             f"the packaged engine failed (exit code {result.returncode})",
         )
+        check(
+            "engine checks passed" in output,
+            "the self-test reported its results",
+            "the self-test produced no readable result — neither stdout nor "
+            f"{RESULT_FILE}",
+        )
+
+    # Not shipped to the user: it is a build artefact, not part of the product.
+    transcript.unlink(missing_ok=True)
 
     notes.append(
         "the window itself was not opened — driving a real GUI in CI is not "

@@ -32,7 +32,7 @@ July 2026 regression reached 24/27.
 | Standalone desktop app | Built — `desktop/`, PySide6, 22 tests driving it offscreen. |
 | Windows packaging | Built — PyInstaller `--onedir`, GitHub Actions, verified before upload. See [WINDOWS_RELEASE.md](WINDOWS_RELEASE.md). |
 | Report history | Not built. The one remaining item from the production target. |
-| Tests | 352 tests, all passing. |
+| Tests | 373 tests, all passing. Any single test is capped at 90s by `pytest-timeout`. |
 | Review / decision system | Done — questions with candidates, recommendations and reasons; answers saved as rules or one-off overrides. |
 | Local UI | Done — three screens: Generate, Needs Review, Saved decisions. |
 | Windows launcher | Done — hidden console, browser opens itself, idempotent, with a Stop script. The fragile parts live in `launcher/open_when_ready.py` and are unit-tested; the batch is checked by assertion. **The .bat/.vbs themselves are untested on Windows** (built on macOS). |

@@ -54,6 +54,27 @@ git push origin v0.1.0
 The artifact appears in exactly the same place. Tags are worth using once the
 tool is in real monthly use, so you can tell which build someone is running.
 
+## How long it should take
+
+About **10 minutes**. Roughly:
+
+| Step | Expected | Capped at |
+| --- | --- | --- |
+| Check out | 15s | 3 min |
+| Set up Python | 10s | 5 min |
+| Install dependencies | 1–2 min (seconds once cached) | 10 min |
+| Run the test suite | under 1 min | 12 min |
+| Build the application | 2–4 min | 12 min |
+| Verify the build | under 1 min | 6 min |
+| Package and upload | 1–2 min | 16 min |
+
+Every step is individually time-limited, so one stalled step fails in minutes
+and names itself rather than consuming the job.
+
+The test step runs with `-vv --durations=30`, so the log shows the last test to
+start and where the time went. Individual tests are capped at 90 seconds by
+`pytest-timeout`.
+
 ## When a build fails
 
 The workflow stops rather than producing something broken. It fails if:
@@ -65,7 +86,17 @@ The workflow stops rather than producing something broken. It fails if:
 - **the packaged engine cannot run** — it is made to parse a Daily report and
   write a workbook inside the finished build; if that fails, so does the workflow
 
-Click the red step to see why.
+Click the red step to see why. Because every step is bounded, a failure is a
+failure rather than a 45-minute wait.
+
+> **The first run hit the 45-minute job limit.** A single test hung: on Windows
+> the launcher's failure path opened a modal message box, which waits for a
+> click that a build machine can never give. It passed on macOS in a fifth of a
+> second, because the branch that opens it is Windows-only.
+>
+> The dialog is now shown only when somebody is there to close it, every step
+> is time-bounded, and `tests/test_launcher.py` fails if any modal dialog is
+> ever added outside the one gated function.
 
 The window itself is not opened during the build. Driving a real GUI in CI is not
 reliable, and a pass we did not earn would be worse than no check — so the engine

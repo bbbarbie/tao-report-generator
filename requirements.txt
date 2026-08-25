@@ -6,4 +6,5 @@ streamlit>=1.36
 
 # Dev
 pytest>=8.0
+pytest-timeout>=2.3
 pyyaml>=6.0

@@ -231,3 +231,88 @@ class TestFirstTimeSetupGuide:
 
     def test_the_launcher_points_at_this_guide_by_name(self):
         assert "FIRST_TIME_SETUP" in START_BAT.read_text()
+
+
+class TestNothingBlocksAnUnattendedMachine:
+    """A modal dialog on a machine with nobody at it waits for ever.
+
+    This is not hypothetical: a message box in ``report_failure`` hung a
+    Windows CI job for its full 45-minute limit, having passed on macOS in a
+    fifth of a second because the branch that opens it is Windows-only.
+    """
+
+    def test_no_dialog_where_there_is_nobody_to_close_it(self, monkeypatch):
+        monkeypatch.setattr(opener.sys, "platform", "win32")
+        for name in ("CI", "GITHUB_ACTIONS", "TF_BUILD"):
+            monkeypatch.delenv(name, raising=False)
+        monkeypatch.setenv("CI", "true")
+        assert not opener.someone_can_dismiss_a_dialog()
+
+    def test_no_dialog_when_explicitly_suppressed(self, monkeypatch):
+        monkeypatch.setattr(opener.sys, "platform", "win32")
+        for name in ("CI", "GITHUB_ACTIONS", "TF_BUILD"):
+            monkeypatch.delenv(name, raising=False)
+        monkeypatch.setenv("TAO_NO_DIALOGS", "1")
+        assert not opener.someone_can_dismiss_a_dialog()
+
+    def test_a_real_windows_desktop_still_gets_the_dialog(self, monkeypatch):
+        """The point of the message box is a user with no console to read."""
+        monkeypatch.setattr(opener.sys, "platform", "win32")
+        for name in ("CI", "GITHUB_ACTIONS", "TF_BUILD", "TAO_NO_DIALOGS"):
+            monkeypatch.delenv(name, raising=False)
+        assert opener.someone_can_dismiss_a_dialog()
+
+    def test_reporting_a_failure_opens_nothing_under_ci(self, monkeypatch, capsys):
+        opened = []
+        monkeypatch.setattr(opener, "show_dialog", opened.append)
+        monkeypatch.setenv("CI", "true")
+        opener.report_failure("boom", detail="boom detail")
+        assert not opened, "a build machine must never be shown a dialog"
+        assert "boom detail" in capsys.readouterr().err, "but it must still be told"
+
+    def test_the_whole_failure_path_is_bounded_on_a_windows_like_run(
+        self, closed_port, monkeypatch
+    ):
+        """End to end: pretend to be Windows-under-CI and require it to return."""
+        monkeypatch.setattr(opener.sys, "platform", "win32")
+        monkeypatch.setattr(opener.time, "sleep", lambda _: None)
+        monkeypatch.setenv("CI", "true")
+        called = []
+        monkeypatch.setattr(opener, "show_dialog", called.append)
+        assert opener.main([str(closed_port), "0.2"]) == 1
+        assert not called
+
+    def test_every_blocking_dialog_sits_behind_the_gate(self):
+        """Catch the next one of these before a build machine does.
+
+        Any call that opens a modal dialog must live inside ``show_dialog``,
+        which is the single place ``someone_can_dismiss_a_dialog`` guards.
+        """
+        import ast
+
+        BLOCKING = {"MessageBoxW", "MessageBoxA", "Popup"}
+        GATED_IN = {"show_dialog"}
+
+        path = REPO_ROOT / "launcher" / "open_when_ready.py"
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+
+        enclosing: dict[int, str] = {}
+        for node in ast.walk(tree):
+            if isinstance(node, ast.FunctionDef):
+                for child in ast.walk(node):
+                    enclosing.setdefault(getattr(child, "lineno", -1), node.name)
+
+        offenders = [
+            (node.lineno, node.func.attr, enclosing.get(node.lineno, "<module>"))
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr in BLOCKING
+        ]
+        assert offenders, "expected to find the dialog call; has it been renamed?"
+        for lineno, call, function in offenders:
+            assert function in GATED_IN, (
+                f"{path.name}:{lineno} calls {call}() from {function}(), which is "
+                "not gated by someone_can_dismiss_a_dialog(). A modal dialog on "
+                "an unattended machine blocks for ever."
+            )

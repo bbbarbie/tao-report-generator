@@ -84,7 +84,10 @@ exe = EXE(
     strip=False,
     upx=False,
     console=False,          # no console window for the end user
-    disable_windowed_traceback=False,
+    # A windowed build reports an unhandled exception in a *dialog*, which on
+    # an unattended machine waits for a click that never comes. The self-test
+    # reports failure through its exit code and result file instead.
+    disable_windowed_traceback=True,
     argv_emulation=False,
     target_arch=None,
     codesign_identity=None,

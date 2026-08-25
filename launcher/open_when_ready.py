@@ -11,6 +11,7 @@ sleep without a console, and because this way it can be tested.
 
 from __future__ import annotations
 
+import os
 import socket
 import sys
 import time
@@ -54,19 +55,45 @@ STARTUP_FAILED = (
 )
 
 
+def someone_can_dismiss_a_dialog() -> bool:
+    """Is there a person at this machine to close a message box?
+
+    A message box is modal: it blocks until somebody clicks OK. That is what
+    makes it the right way to reach a user whose application has no console,
+    and exactly what makes it a trap anywhere unattended — on a build machine
+    it simply waits forever.
+
+    Kept deliberately conservative: anything that looks automated gets no
+    dialog. A missed message on a build server costs nothing; a blocked one
+    costs the whole job.
+    """
+    if sys.platform != "win32":
+        return False
+    if os.environ.get("TAO_NO_DIALOGS"):
+        return False
+    # CI, GITHUB_ACTIONS and TF_BUILD are set by the common build services.
+    return not any(
+        os.environ.get(name) for name in ("CI", "GITHUB_ACTIONS", "TF_BUILD")
+    )
+
+
+def show_dialog(message: str) -> None:  # pragma: no cover - Windows only
+    import ctypes
+
+    ctypes.windll.user32.MessageBoxW(0, message, "TAO 報表產生器", 0x10)
+
+
 def report_failure(message: str, detail: str = "") -> None:
     """Tell the user, even when there is no console to print to.
 
     The Windows launcher deliberately runs without a visible window, so a
     failure that only reached stderr would be invisible to the person who
-    needs to know about it.
+    needs to know about it. Unattended machines get the text and no dialog.
     """
     print(detail or message, file=sys.stderr)
-    if sys.platform == "win32":  # pragma: no cover - Windows only
+    if someone_can_dismiss_a_dialog():
         try:
-            import ctypes
-
-            ctypes.windll.user32.MessageBoxW(0, message, "TAO 報表產生器", 0x10)
+            show_dialog(message)
         except Exception:
             pass
 

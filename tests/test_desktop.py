@@ -262,3 +262,51 @@ class TestSelfTest:
 
         assert main(["--selftest"]) == 0
         assert called
+
+
+class TestSelfTestTerminatesDeterministically:
+    """A packaged build is launched by a machine, not a person.
+
+    It has no console on Windows, so nothing may depend on stdout existing,
+    and nothing may wait for input. Exit code 0 or 1, always.
+    """
+
+    def test_it_never_starts_the_event_loop(self, qt_app, monkeypatch):
+        from PySide6.QtWidgets import QApplication as RealApp
+        from desktop.main import main
+
+        started = []
+        monkeypatch.setattr(RealApp, "exec", lambda self: started.append(True) or 0)
+        assert main(["--selftest"]) == 0
+        assert not started, "selftest must never enter the Qt event loop"
+
+    def test_it_works_with_no_stdout_at_all(self, monkeypatch):
+        """A windowed Windows build has sys.stdout set to None."""
+        import desktop.selftest as selftest
+
+        monkeypatch.setattr(selftest.sys, "stdout", None)
+        assert selftest.main() == 0
+
+    def test_it_carries_a_watchdog(self):
+        import desktop.selftest as selftest
+
+        assert selftest.WATCHDOG_SECONDS <= 300
+        timer = selftest.start_watchdog(60)
+        try:
+            assert timer.daemon, "the watchdog must not keep the process alive"
+        finally:
+            timer.cancel()
+
+    def test_it_leaves_a_readable_result_even_without_a_console(self, tmp_path):
+        import desktop.selftest as selftest
+
+        selftest.TRANSCRIPT.clear()
+        selftest.say("hello")
+        written = selftest.write_transcript(tmp_path)
+        assert written is not None
+        assert "hello" in written.read_text(encoding="utf-8")
+
+    def test_writing_the_result_somewhere_unwritable_is_survivable(self, tmp_path):
+        import desktop.selftest as selftest
+
+        assert selftest.write_transcript(tmp_path / "nope" / "deeper") is None

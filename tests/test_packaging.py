@@ -89,12 +89,84 @@ class TestWorkflow:
             "an empty upload must fail the run, not pass quietly"
         )
 
-    def test_the_gui_toolkit_can_start_headless_in_ci(self, workflow):
+    def test_the_gui_toolkit_can_start_headless(self, workflow):
+        assert workflow["env"]["QT_QPA_PLATFORM"] == "offscreen"
+
+    def test_nothing_may_open_a_dialog_on_the_build_machine(self, workflow):
+        """A modal dialog on an unattended runner blocks until the job dies."""
+        assert workflow["env"]["TAO_NO_DIALOGS"] == "1"
+        assert str(workflow["env"]["CI"]).lower() == "true"
+
+    def test_every_step_is_time_bounded(self, workflow):
+        """One stalled step must not be able to consume the whole job."""
+        job = workflow["jobs"]["build"]
+        assert job["timeout-minutes"] <= 30
+        for step in job["steps"]:
+            if step.get("name") == "Summary":
+                continue  # trivial, and runs even on failure
+            assert "timeout-minutes" in step, f"{step.get('name')} is unbounded"
+
+    def test_the_step_budget_leaves_room_under_the_job_limit(self, workflow):
+        job = workflow["jobs"]["build"]
+        budget = sum(s.get("timeout-minutes", 0) for s in job["steps"])
+        assert budget >= job["timeout-minutes"], (
+            "step limits should be able to fire before the job limit does"
+        )
+
+    def test_the_test_step_is_the_tightest_bound(self, workflow):
+        """It caused the 45-minute timeout; it should fail fastest now."""
+        steps = {s.get("name"): s for s in workflow["jobs"]["build"]["steps"]}
+        assert steps["Run the test suite"]["timeout-minutes"] <= 12
+
+    def test_the_test_run_reports_where_time_went(self, workflow):
         step = next(
             s for s in workflow["jobs"]["build"]["steps"]
             if s.get("name") == "Run the test suite"
         )
-        assert step["env"]["QT_QPA_PLATFORM"] == "offscreen"
+        assert "--durations" in step["run"], "a slow run must name the slow tests"
+        assert "-vv" in step["run"], "a hang must name the last test to start"
+        assert "--timeout" in step["run"]
+
+    def test_pyinstaller_runs_exactly_once(self, workflow):
+        runs = [
+            s.get("run", "") for s in workflow["jobs"]["build"]["steps"]
+        ]
+        invocations = sum(r.count("pyinstaller ") for r in runs)
+        assert invocations == 1, f"PyInstaller is invoked {invocations} times"
+
+    def test_the_suite_is_not_run_twice(self, workflow):
+        runs = " ".join(s.get("run", "") for s in workflow["jobs"]["build"]["steps"])
+        assert runs.count("pytest") == 1, "one test run is enough"
+
+    def test_dependencies_are_cached(self, workflow):
+        setup = next(
+            s for s in workflow["jobs"]["build"]["steps"]
+            if s.get("uses", "").startswith("actions/setup-python")
+        )
+        assert setup["with"]["cache"] == "pip"
+        assert "requirements-desktop.txt" in setup["with"]["cache-dependency-path"]
+
+    def test_the_actions_are_current_major_versions(self, workflow):
+        """Old majors run on retired Node runtimes and are warned about."""
+        minimum = {"actions/checkout": 5, "actions/setup-python": 6,
+                   "actions/upload-artifact": 5}
+        for step in workflow["jobs"]["build"]["steps"]:
+            uses = step.get("uses", "")
+            if not uses:
+                continue
+            name, _, ref = uses.partition("@")
+            if name in minimum:
+                assert int(ref.lstrip("v").split(".")[0]) >= minimum[name], (
+                    f"{uses} is an outdated major version"
+                )
+
+    def test_the_smoke_test_is_bounded(self, workflow):
+        step = next(
+            s for s in workflow["jobs"]["build"]["steps"]
+            if s.get("name") == "Verify the build"
+        )
+        assert step["timeout-minutes"] <= 6
+        assert 60 <= int(step["env"]["TAO_SELFTEST_TIMEOUT"]) <= 300
 
     def test_it_needs_no_secrets(self):
         assert "secrets." not in WORKFLOW.read_text(encoding="utf-8"), (
