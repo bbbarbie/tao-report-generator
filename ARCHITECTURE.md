@@ -28,24 +28,29 @@ Everything before "select month" happens once, at setup.
 
 | Capability | State today |
 | --- | --- |
-| Remembered Daily Reports folder | Not built — the folder is typed each time |
+| Remembered Daily Reports folder | Built (`app/settings.py`) |
 | Saved OPR mappings | Built (`config/operator_mapping.json` + learned rules) |
 | One-off overrides, kept apart from reusable rules | Built (`app/decisions.py`) |
-| Report history | Not built — output is overwritten per month |
+| Report history | **Not built** — the last outstanding item |
 | Audit trail | Built (Audit sheet, per-value provenance) |
 | Anomaly detection across Daily snapshots | Partly built (`CONFLICTING_SNAPSHOTS`, window integrity) |
-| All corporate data local | Built, and enforced: server binds to `127.0.0.1`, nothing is uploaded |
+| All corporate data local | Built. The desktop app makes no network call at all; the dev server binds to `127.0.0.1` |
 
-### Current state: an interim interface
+### Current state
 
-The interface today is a local Streamlit app, launched by a double-click
-wrapper that hides the console. It is deliberately **temporary** — it exists so
-the calculation engine could be validated against real data before any effort
-went into packaging.
+The desktop application exists (`desktop/`) and is built and verified by
+`.github/workflows/build-windows.yml` on every manual trigger and version tag.
+See [WINDOWS_RELEASE.md](WINDOWS_RELEASE.md) for how to produce a release.
 
-It still falls short of the target in three ways: it needs Python installed, it
-opens in a browser, and the first run downloads libraries. The launcher hides
-as much of that as a script can, but it cannot remove it.
+Still to do from the list above: report history. The remembered Daily folder
+landed with `app/settings.py`.
+
+### The interim web interface
+
+The Streamlit app is now **development only**. It exists because it let the
+engine be validated against real data long before any effort went into
+packaging, and it remains the quickest way to try a change. It is not what the
+employee runs.
 
 ## The rule that makes the swap cheap
 
@@ -92,21 +97,32 @@ Two alternatives were considered and rejected:
 - **Tkinter.** In the standard library, so no packaging risk, but the table
   widget is poor and this report is a table.
 
-### Sequence when the time comes
+### Sequence
 
-1. `app/` is already the engine. No changes expected.
-2. Add `app/settings.py` — the remembered Daily folder, the last month used,
-   and the output location. Same JSON-file pattern as `decisions.py`.
-3. Add `app/history.py` — write each generated report to a dated folder rather
-   than overwriting, and keep an index. The audit trail already carries the
-   provenance; this gives it somewhere to live.
-4. Build `desktop/` with PySide6: three views mirroring the current three
-   screens, over the same engine calls.
-5. Package with PyInstaller. Bundle a `.ico`, sign if the company has a
-   certificate — unsigned executables draw SmartScreen warnings, which is
-   exactly the sort of thing that stops a non-technical user.
-6. Retire `ui.py`, `ui_pages/` and the launcher scripts. `app/`, `config/` and
-   `tests/` are untouched by the whole exercise.
+1. ~~`app/` is already the engine.~~ Unchanged, as expected.
+2. ~~`app/settings.py` — remembered Daily folder, last month, output location.~~ Done.
+3. `app/history.py` — write each generated report to a dated folder rather than
+   overwriting, and keep an index. **Still to do.**
+4. ~~Build `desktop/` with PySide6 over the same engine calls.~~ Done.
+5. ~~Package with PyInstaller.~~ Done — `packaging/tao_report_generator.spec`,
+   built by GitHub Actions. Still worth adding: a `.ico`, and code signing if
+   the company has a certificate. Unsigned executables draw a SmartScreen
+   warning, which is exactly the sort of thing that stops a non-technical user.
+6. Retire `ui.py`, `ui_pages/` and the launcher scripts once the desktop app has
+   been used for a real month. `app/`, `config/` and `tests/` are untouched.
+
+### Where files live in a packaged build
+
+`app/paths.py` keeps two directories apart, which matters once the application
+is installed rather than checked out:
+
+* the **seed** operator list and report scope ship inside the bundle and are
+  replaced by every new version;
+* the user's **decisions and settings** go to `%APPDATA%\TAO Report Generator\`,
+  so upgrading the application never discards them, and so nothing is written
+  into a folder the user may not have permission for.
+
+In a source checkout both resolve to `config/`, leaving development unchanged.
 
 ## Before any of that
 
@@ -139,8 +155,19 @@ app/                    the engine — no interface dependencies, ever
   validation.py         compares against a known-good workbook (tests only)
   cli.py                command line entry point
 
-ui.py, ui_pages/        interim interface — replaceable
-launcher/               interim Windows launcher — replaceable
+  settings.py           remembered folder, month and output location
+  paths.py              where files live in a checkout vs a packaged build
+
+desktop/                the product — PySide6 views over the engine
+  main.py               window, table, settings
+  review_view.py        the Needs Review screen
+  selftest.py           proves a packaged build works, run by CI
+
+packaging/              PyInstaller spec, end-user guide, build verifier
+.github/workflows/      build-windows.yml — the release pipeline
+
+ui.py, ui_pages/        development web interface only
+launcher/               launcher for the development interface
 config/                 mappings, scope, saved decisions
 tools/                  investigation and validation scripts
 tests/                  including test_architecture.py, which enforces the above

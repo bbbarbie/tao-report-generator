@@ -22,7 +22,9 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
-DECISIONS_PATH = Path(__file__).resolve().parent.parent / "config" / "decisions.json"
+from app import paths
+
+DECISIONS_FILE = "decisions.json"
 
 # Rule kinds. Only add a kind here if the answer really does generalise.
 VESSEL_OPERATOR = "vessel_operator"
@@ -64,7 +66,7 @@ class DecisionStore:
 
     @classmethod
     def load(cls, path: str | Path | None = None) -> "DecisionStore":
-        path = Path(path) if path else DECISIONS_PATH
+        path = Path(path) if path else paths.user_file(DECISIONS_FILE)
         store = cls(path=path)
         if not path.exists():
             return store
@@ -87,7 +89,7 @@ class DecisionStore:
         return store
 
     def save(self, path: str | Path | None = None) -> Path:
-        path = Path(path) if path else (self.path or DECISIONS_PATH)
+        path = Path(path) if path else (self.path or paths.user_file(DECISIONS_FILE))
         path.parent.mkdir(parents=True, exist_ok=True)
         payload = {
             "_notes": (

@@ -1,0 +1,4 @@
+# Extra packages for building the Windows desktop application.
+# The end user needs none of this — it is bundled into the executable.
+PySide6>=6.6
+pyinstaller>=6.6

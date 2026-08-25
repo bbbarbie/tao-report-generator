@@ -29,8 +29,10 @@ July 2026 regression reached 24/27.
 | Blind validation | Done — held-out month reproduces 42/42 against 96.6% on the fitted period. |
 | Engine / interface separation | Done and enforced by test. |
 | End-user setup guide (Chinese) | Done — `FIRST_TIME_SETUP.md`, plus Chinese messages in the launcher. |
-| Standalone desktop app | **Not started, deliberately.** Correctness first. |
-| Tests | 291 tests, all passing. |
+| Standalone desktop app | Built — `desktop/`, PySide6, 22 tests driving it offscreen. |
+| Windows packaging | Built — PyInstaller `--onedir`, GitHub Actions, verified before upload. See [WINDOWS_RELEASE.md](WINDOWS_RELEASE.md). |
+| Report history | Not built. The one remaining item from the production target. |
+| Tests | 352 tests, all passing. |
 | Review / decision system | Done — questions with candidates, recommendations and reasons; answers saved as rules or one-off overrides. |
 | Local UI | Done — three screens: Generate, Needs Review, Saved decisions. |
 | Windows launcher | Done — hidden console, browser opens itself, idempotent, with a Stop script. The fragile parts live in `launcher/open_when_ready.py` and are unit-tested; the batch is checked by assertion. **The .bat/.vbs themselves are untested on Windows** (built on macOS). |
@@ -188,9 +190,11 @@ folder's own `.venv`, so another Python program on the machine is untouched.
    verified: batch and VBScript syntax, the first-run `venv` bootstrap, and
    `stop.bat`'s WMI process match. Those are the things to watch on the first
    real run.
-6. Then, and only then, build the standalone desktop application. The plan,
-   the packaging choice and the order of work are in
-   [ARCHITECTURE.md](ARCHITECTURE.md).
+6. Add report history (`app/history.py`) — the last outstanding item from the
+   production target in [ARCHITECTURE.md](ARCHITECTURE.md).
+7. Run the packaged application on a real Windows machine before handing it
+   over. CI verifies the engine inside the build but deliberately does not
+   drive the window.
 
 ## Repository map
 

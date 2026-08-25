@@ -1,8 +1,9 @@
-# Runtime
+# Runtime — the engine needs only this.
 openpyxl>=3.1
 
-# Local UI (optional — the CLI works without it)
+# Development web interface (the desktop app does not use it).
 streamlit>=1.36
 
 # Dev
 pytest>=8.0
+pyyaml>=6.0

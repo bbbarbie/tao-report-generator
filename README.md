@@ -12,9 +12,9 @@ run time.
 **First time on Windows?** See **[FIRST_TIME_SETUP.md](FIRST_TIME_SETUP.md)**
 (繁體中文) — a step-by-step guide that assumes no technical knowledge.
 
-**Where this is heading:** a standalone Windows application, no Python or
-browser required. See [ARCHITECTURE.md](ARCHITECTURE.md). The current interface
-is interim; the calculation engine is deliberately independent of it.
+**The product is a standalone Windows application** — no Python, no browser.
+Build one from [WINDOWS_RELEASE.md](WINDOWS_RELEASE.md). The Streamlit interface
+below is kept for development only; both drive the same engine.
 
 ## For the person running the report
 

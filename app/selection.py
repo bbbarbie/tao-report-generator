@@ -12,12 +12,14 @@ import json
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from app import paths
 from app.models import VoyageHistory
 from app.normalization import is_qingdao, normalize_terminal
 from app.operators import OperatorMapping
 from app.voyage_history import HistoryIndex
 
-SCOPE_PATH = Path(__file__).resolve().parent.parent / "config" / "report_scope.json"
+SCOPE_FILE = "report_scope.json"
+SCOPE_PATH = paths.resolve_config(SCOPE_FILE)
 
 # Rejection reasons
 NOT_QINGDAO = "NOT_A_QINGDAO_BERTH"
@@ -40,7 +42,7 @@ class ScopeConfig:
 
     @classmethod
     def load(cls, path: str | Path | None = None) -> "ScopeConfig":
-        path = Path(path) if path else SCOPE_PATH
+        path = Path(path) if path else paths.resolve_config(SCOPE_FILE)
         if not path.exists():
             return cls()
         with path.open(encoding="utf-8") as fh:

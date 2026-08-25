@@ -1,0 +1,123 @@
+name: Build Windows App
+
+# Trigger by hand from the Actions tab, or by pushing a version tag.
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version label for the build (e.g. v0.1.0). Optional."
+        required: false
+        default: ""
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: read
+
+env:
+  APP_NAME: TAO Report Generator
+  ARTIFACT_NAME: TAO-Report-Generator-Windows
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+          python -m pip install -r requirements-desktop.txt
+
+      # The build is only worth making if the engine is correct. A failure here
+      # stops everything: no artifact is produced from a broken engine.
+      - name: Run the test suite
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: python -m pytest -q
+
+      - name: Build the application
+        run: |
+          pyinstaller packaging/tao_report_generator.spec --noconfirm --clean `
+            --distpath dist --workpath build
+        # PyInstaller returns non-zero on failure, which fails the step.
+
+      # PyInstaller puts bundled data under _internal. The end user should find
+      # the guide beside the icon they click, not buried in a subfolder.
+      - name: Place the end-user guide beside the application
+        run: |
+          Copy-Item "packaging\使用說明.txt" "dist\$env:APP_NAME\使用說明.txt" -Force
+
+      - name: Verify the build
+        run: python packaging/verify_build.py "dist/$env:APP_NAME"
+        # Fails if the exe is missing, required files were left out, anything
+        # confidential was bundled, or the packaged engine cannot run.
+
+      - name: Package into a ZIP
+        run: |
+          Compress-Archive -Path "dist\$env:APP_NAME" `
+            -DestinationPath "$env:ARTIFACT_NAME.zip" -Force
+          if (-not (Test-Path "$env:ARTIFACT_NAME.zip")) {
+            Write-Error "the ZIP was not created"
+            exit 1
+          }
+          Write-Host "ZIP size: $((Get-Item "$env:ARTIFACT_NAME.zip").Length / 1MB) MB"
+
+      - name: Check the ZIP contains what it should
+        shell: python
+        run: |
+          import os, sys, zipfile
+
+          name = os.environ["ARTIFACT_NAME"] + ".zip"
+          app = os.environ["APP_NAME"]
+          with zipfile.ZipFile(name) as archive:
+              names = archive.namelist()
+
+          required = [f"{app}/{app}.exe", f"{app}/使用說明.txt"]
+          missing = [r for r in required if r not in names]
+          if missing:
+              print("missing from the ZIP:", missing)
+              print("first 20 entries:", names[:20])
+              sys.exit(1)
+
+          leaked = [n for n in names if n.endswith(".xlsx") or "/tests/" in n]
+          if leaked:
+              print("these should never have been packaged:", leaked[:10])
+              sys.exit(1)
+
+          print(f"{len(names)} entries, top level: {app}/")
+          print("ZIP contents verified")
+
+      - name: Upload the artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.ARTIFACT_NAME }}
+          path: ${{ env.ARTIFACT_NAME }}.zip
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Summary
+        shell: bash
+        run: |
+          {
+            echo "### Windows build ready"
+            echo
+            echo "Download **${ARTIFACT_NAME}** from the Artifacts section at the"
+            echo "bottom of this run's summary page."
+            echo
+            echo "Unzip it and give the whole **${APP_NAME}** folder to the user."
+            echo "They double-click **${APP_NAME}.exe** — no Python needed."
+            echo
+            echo "Built from \`${GITHUB_REF_NAME}\` (\`${GITHUB_SHA:0:7}\`)."
+          } >> "$GITHUB_STEP_SUMMARY"

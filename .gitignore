@@ -40,8 +40,14 @@ samples/daily/*
 samples/ground_truth/*
 !samples/ground_truth/.gitkeep
 
-# Local decisions made in the Review page — specific to one person's data.
+# Local decisions and settings — specific to one person's data and machine.
 config/decisions.json
+config/settings.json
+
+# Packaged application output
+dist/
+build/
+*.spec.bak
 
 # Local overrides
 config/local.yaml

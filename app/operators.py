@@ -14,7 +14,11 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
-CONFIG_PATH = Path(__file__).resolve().parent.parent / "config" / "operator_mapping.json"
+from app import paths
+
+CONFIG_FILE = "operator_mapping.json"
+# The shipped list in a source checkout; the user's own copy once they edit it.
+CONFIG_PATH = paths.resolve_config(CONFIG_FILE)
 
 UNKNOWN = "OPR_UNKNOWN"
 WHL = "WHL"
@@ -54,14 +58,16 @@ class OperatorMapping:
 
     @classmethod
     def load(cls, path: str | Path | None = None) -> "OperatorMapping":
-        path = Path(path) if path else CONFIG_PATH
+        path = Path(path) if path else paths.resolve_config(CONFIG_FILE)
         if not path.exists():
             return cls({})
         with path.open(encoding="utf-8") as fh:
             return cls(json.load(fh))
 
     def save(self, path: str | Path | None = None) -> Path:
-        path = Path(path) if path else CONFIG_PATH
+        # Always written where the user's own files live, never back into a
+        # read-only application folder.
+        path = Path(path) if path else paths.user_file(CONFIG_FILE)
         path.parent.mkdir(parents=True, exist_ok=True)
         payload = {
             "_notes": self.notes,
