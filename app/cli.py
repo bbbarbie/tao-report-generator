@@ -123,7 +123,7 @@ def main(argv: list[str] | None = None) -> int:
             if recommended:
                 print(f"      suggested: {recommended.label}")
         print()
-        print("Answer these on the Needs Review screen: streamlit run ui.py")
+        print("Answer these on the Needs Review screen of the app.")
 
     print(f"wrote {workbook}")
     print(f"wrote {review}")

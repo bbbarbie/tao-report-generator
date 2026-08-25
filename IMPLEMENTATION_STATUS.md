@@ -3,6 +3,12 @@
 Written so another developer can pick this up cold. Last updated after the
 July 2026 regression reached 24/27.
 
+> **Production target: a standalone Windows desktop application** (PySide6 +
+> PyInstaller), not a deployed web app. The Streamlit interface is interim. See
+> [ARCHITECTURE.md](ARCHITECTURE.md). The engine under `app/` is already free of
+> any interface dependency, and `tests/test_architecture.py` fails the build if
+> that ever stops being true.
+
 ## Where things stand
 
 | Area | State |
@@ -20,10 +26,14 @@ July 2026 regression reached 24/27.
 | Review output | Done — `review.csv` and a `Review` sheet. |
 | Audit trail | Done — an `Audit` sheet with per-value provenance. |
 | Ground-truth validation | Done — machine-readable JSON and a readable summary. |
-| Tests | 213 tests, all passing. |
+| Blind validation | Done — held-out month reproduces 42/42 against 96.6% on the fitted period. |
+| Engine / interface separation | Done and enforced by test. |
+| End-user setup guide (Chinese) | Done — `FIRST_TIME_SETUP.md`, plus Chinese messages in the launcher. |
+| Standalone desktop app | **Not started, deliberately.** Correctness first. |
+| Tests | 291 tests, all passing. |
 | Review / decision system | Done — questions with candidates, recommendations and reasons; answers saved as rules or one-off overrides. |
 | Local UI | Done — three screens: Generate, Needs Review, Saved decisions. |
-| Windows launcher | Done — `TAO Report Generator.vbs` starts the server with no console window and opens the browser. **Not tested on Windows** (built on macOS); the equivalent macOS launcher is verified end to end. |
+| Windows launcher | Done — hidden console, browser opens itself, idempotent, with a Stop script. The fragile parts live in `launcher/open_when_ready.py` and are unit-tested; the batch is checked by assertion. **The .bat/.vbs themselves are untested on Windows** (built on macOS). |
 | Packaged executable | Not done. The launcher still needs Python installed. See "Next steps". |
 
 ## Verified result
@@ -41,6 +51,32 @@ Reproduce it with:
 python -m app.cli --daily samples/daily --month 2026-07 \
     --validate-against "samples/ground_truth/TAO Compare 202607.xlsx"
 ```
+
+## Blind validation
+
+Every rule was derived from July 2026, the only month with a hand-made report to
+check against, so a good July score is partly self-confirming.
+`tools/blind_validation.py` holds out everything that departed after July and
+re-tests the rules against the Daily's own printed figures — numbers that played
+no part in deriving anything.
+
+```
+HELD OUT (departed August 2026 or later)
+  Arr Delay = ATA - window start                14/14  (100.0%)
+  Dep Delay = ATD - window end                  14/14  (100.0%)
+  W/B = max(0, ATB - max(ATA, window start))    14/14  (100.0%)
+
+VERDICT: 42/42 held out, 113/117 on the fitted period, gap -3.4 points
+```
+
+The rules do slightly *better* on data they never saw, which is the opposite of
+what overfitting looks like. Six figures are set aside as rows where the monthly
+report is *meant* to differ from the Daily — a corrected window, or a ship that
+arrived before its slot opened — and the classifier for those is itself tested,
+so it cannot be used to excuse an arbitrary failure.
+
+Caveat: 42 held-out figures is enough to rule out gross overfitting, not enough
+to be a precise estimate. It strengthens with every month of Daily files.
 
 ## The one thing to confirm with the report's author
 
@@ -86,6 +122,27 @@ question is `unresolved` even when it already carries a defensible value; only
 a *blocking* question (one that would leave a required column empty) actually
 holds a value back. The month always generates.
 
+## The launcher
+
+`TAO Report Generator.vbs` runs `launcher/start.bat` with window style 0, so no
+console is ever visible. Three things in that script are load-bearing and were
+got wrong first time round:
+
+* **The server runs in the foreground of the batch.** A child started with
+  `start /b` shares its parent's console; when the batch exits, that console is
+  destroyed and the server dies with it. Keeping the server in the foreground
+  keeps the console alive for as long as it runs. `tests/test_launcher.py`
+  asserts the server line is not prefixed with `start`.
+* **The wait-and-open step is Python, not batch.** `timeout /t` needs console
+  input and is unreliable when there is no console. `launcher/open_when_ready.py`
+  polls the port and opens the browser, and is unit-tested — including the case
+  where the server binds late.
+* **Starting it twice is safe.** The script probes the port first; if something
+  is already answering it just reopens the browser and exits.
+
+`Stop TAO Report Generator.vbs` kills only processes running out of this
+folder's own `.venv`, so another Python program on the machine is untouched.
+
 ## Design decisions worth knowing
 
 - **The generator never reads the ground truth.** `app/validation.py` is only
@@ -123,14 +180,17 @@ holds a value back. The month always generates.
 3. Ask about `E044JKPU` and `S564JCAG`; if an unsampled Daily file explains them,
    the rules are already right and the sample set is just incomplete.
 4. Decide whether the generated workbook should preserve the other sheets.
-5. **Test the Windows launcher on an actual Windows machine.** It was written
-   on macOS and cannot be run here. The parts that were verifiable — the
-   Streamlit flags, the loopback binding, the port-readiness probe and the
-   browser hand-off — are all confirmed via the macOS launcher, which uses the
-   same sequence. What remains unverified is batch/VBScript syntax and the
-   first-run `venv` bootstrap on Windows.
-6. Package as a double-clickable app (PyInstaller) so Python does not need to
-   be installed at all. The launcher currently requires Python 3.10+.
+5. **Run the Windows launcher once on a real Windows machine.** It was written
+   on macOS. What is verified: the port probe, the browser hand-off, the
+   timeout path and the failure message (unit tests in
+   `tests/test_launcher.py`), plus the whole start-to-browser sequence via
+   `run.command`, which now shares the same Python opener. What is *not*
+   verified: batch and VBScript syntax, the first-run `venv` bootstrap, and
+   `stop.bat`'s WMI process match. Those are the things to watch on the first
+   real run.
+6. Then, and only then, build the standalone desktop application. The plan,
+   the packaging choice and the order of work are in
+   [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ## Repository map
 

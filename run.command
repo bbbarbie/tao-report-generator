@@ -1,6 +1,14 @@
 #!/bin/bash
 # Double-click this file to start the TAO Report Generator.
+# The Windows equivalent is "TAO Report Generator.vbs".
 cd "$(dirname "$0")" || exit 1
+
+PORT=8501
+
+# Already running? Just open it again.
+if ./.venv/bin/python launcher/open_when_ready.py "$PORT" 2 >/dev/null 2>&1; then
+  exit 0
+fi
 
 if [ ! -x .venv/bin/streamlit ]; then
   echo "Setting up for first use — this takes a few minutes…"
@@ -9,22 +17,15 @@ if [ ! -x .venv/bin/streamlit ]; then
   ./.venv/bin/pip install --quiet -r requirements.txt || { echo "Setup failed."; read -r; exit 1; }
 fi
 
-PORT=8501
+# Open the browser once the server answers, without blocking it.
+./.venv/bin/python launcher/open_when_ready.py "$PORT" &
+
+echo "TAO Report Generator is starting. Close this window to stop it."
+
 # Bound to the loopback address: reachable from this computer only.
-./.venv/bin/streamlit run ui.py \
+exec ./.venv/bin/streamlit run ui.py \
   --server.address=127.0.0.1 \
   --server.port="$PORT" \
   --server.headless=true \
-  --browser.gatherUsageStats=false &
-
-for _ in $(seq 1 90); do
-  if curl -sf "http://127.0.0.1:$PORT/_stcore/health" >/dev/null 2>&1; then
-    open "http://127.0.0.1:$PORT"
-    break
-  fi
-  sleep 1
-done
-
-echo
-echo "TAO Report Generator is running. Close this window to stop it."
-wait
+  --browser.gatherUsageStats=false \
+  --server.fileWatcherType=none

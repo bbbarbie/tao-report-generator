@@ -9,11 +9,23 @@ so it is reachable only from this computer. No workbook content and no saved
 decision leaves the machine, and there is no AI or cloud service involved at
 run time.
 
+**First time on Windows?** See **[FIRST_TIME_SETUP.md](FIRST_TIME_SETUP.md)**
+(繁體中文) — a step-by-step guide that assumes no technical knowledge.
+
+**Where this is heading:** a standalone Windows application, no Python or
+browser required. See [ARCHITECTURE.md](ARCHITECTURE.md). The current interface
+is interim; the calculation engine is deliberately independent of it.
+
 ## For the person running the report
 
 Double-click **TAO Report Generator** (Windows) or **`run.command`** (macOS).
 No Terminal, no commands. The first run sets itself up and takes a few minutes;
-after that it opens in seconds.
+after that it opens in seconds. Your browser opens on its own once it is ready.
+
+On Windows nothing appears until the browser does — no console window. If you
+want to free the memory afterwards, double-click **Stop TAO Report Generator**;
+leaving it running is harmless, and starting it again just reopens the browser
+rather than launching a second copy.
 
 The tool opens in your browser and works in one direction:
 
